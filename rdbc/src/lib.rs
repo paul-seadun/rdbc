@@ -19,6 +19,8 @@
 //! }
 //! ```
 
+use chrono::prelude::*;
+
 /// RDBC Error
 #[derive(Debug)]
 pub enum Error {
@@ -30,6 +32,8 @@ pub enum Value {
     Int32(i32),
     UInt32(u32),
     String(String),
+    DateTime(NaiveDateTime),
+    Date(NaiveDate),
     //TODO add other types
 }
 
@@ -39,6 +43,8 @@ impl ToString for Value {
             Value::Int32(n) => format!("{}", n),
             Value::UInt32(n) => format!("{}", n),
             Value::String(s) => format!("'{}'", s),
+            Value::DateTime(s) => format!("'{}'", s.format("%Y-%m-%d %H:%M:%S").to_string()),
+            Value::Date(d) => format!("'{}'",d.format("%Y-%m-%d").to_string()),
         }
     }
 }
@@ -87,6 +93,8 @@ pub trait ResultSet {
     fn get_f32(&self, i: u64) -> Result<Option<f32>>;
     fn get_f64(&self, i: u64) -> Result<Option<f64>>;
     fn get_string(&self, i: u64) -> Result<Option<String>>;
+    fn get_date_time(&self, i: u64) -> Result<Option<NaiveDateTime>>;
+    fn get_date(&self, i: u64) -> Result<Option<NaiveDate>>;
     fn get_bytes(&self, i: u64) -> Result<Option<Vec<u8>>>;
 }
 

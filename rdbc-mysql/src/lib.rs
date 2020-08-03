@@ -19,9 +19,12 @@
 
 use mysql as my;
 use mysql_common::constants::ColumnType;
+use mysql_common::chrono::DateTime;
 
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer, Word};
+use mysql_common::chrono::prelude::*;
+
 
 /// Convert a MySQL error into an RDBC error
 fn to_rdbc_err(e: my::error::Error) -> rdbc::Error {
@@ -31,6 +34,8 @@ fn to_rdbc_err(e: my::error::Error) -> rdbc::Error {
 fn value_to_rdbc_err(e: my::FromValueError) -> rdbc::Error {
     rdbc::Error::General(e.to_string())
 }
+
+pub use mysql_common::chrono;
 
 pub struct MySQLDriver {}
 
@@ -60,7 +65,7 @@ impl rdbc::Connection for MySQLConnection {
         }))
     }
 
-    fn prepare<'a>(&'a mut self, sql: &str) -> rdbc::Result<Box<dyn rdbc::Statement + '_>> {
+    fn prepare(&mut self, sql: &str) -> rdbc::Result<Box<dyn rdbc::Statement + '_>> {
         let stmt = self.conn.prepare(&sql).map_err(to_rdbc_err)?;
         Ok(Box::new(MySQLPreparedStatement { stmt }))
     }
@@ -161,6 +166,8 @@ impl<'a> rdbc::ResultSet for MySQLResultSet<'a> {
         get_f32 -> f32,
         get_f64 -> f64,
         get_string -> String,
+        get_date_time -> NaiveDateTime,
+        get_date -> NaiveDate,
         get_bytes -> Vec<u8>
     }
 }
@@ -196,6 +203,9 @@ fn to_my_value(v: &rdbc::Value) -> my::Value {
         rdbc::Value::Int32(n) => my::Value::Int(*n as i64),
         rdbc::Value::UInt32(n) => my::Value::Int(*n as i64),
         rdbc::Value::String(s) => my::Value::from(s),
+        rdbc::Value::DateTime(dt) => my::Value::from(dt),
+        rdbc::Value::Date(d) => my::Value::from(d),
+        rdbc::Value::Time(t) => my::Value::from(t),
         //TODO all types
     }
 }
@@ -222,7 +232,7 @@ fn rewrite(sql: &str, params: &[rdbc::Value]) -> rdbc::Result<String> {
                         Token::Word(Word {
                             value: param.to_string(),
                             quote_style: None,
-                            keyword: "".to_owned(),
+                            keyword: sqlparser::dialect::keywords::Keyword::NONE,
                         })
                     }
                     _ => t.clone(),

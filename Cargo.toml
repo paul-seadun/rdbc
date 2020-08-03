@@ -3,6 +3,7 @@
 members = [
     "rdbc",
     "rdbc-mysql",
+	"rdbc-oracle",
     "rdbc-postgres",
     "rdbc-sqlite",
 #    "rdbc-odbc",
