@@ -7,10 +7,13 @@
 //! ```rust,no_run
 //! use rdbc::*;
 //! use rdbc_oracle::OracleDriver;
+//! use rdbc_oracle::rewrite;
 //!
 //! let driver = OracleDriver::new("","");
 //! let mut conn = driver.connect("//localhost:1521/xe").unwrap();
-//! let mut stmt = conn.prepare("SELECT a FROM b WHERE c = :1").unwrap();
+//! let sql = "SELECT name FROM ZZZZZ WHERE code = ?";
+//! let sql = rewrite(sql,params).unwrap();
+//! let mut stmt = conn.prepare(sql.as_str()).unwrap();
 //! let mut rs = stmt.execute_query(&[Value::Int32(123)]).unwrap();
 //! while rs.next() {
 //!   println!("{:?}", rs.get_string(0));
@@ -245,7 +248,7 @@ fn to_rdbc_type(t: &OracleType) -> rdbc::DataType {
 
 
 
-fn rewrite(sql: &str, params: &[rdbc::Value]) -> rdbc::Result<String> {
+pub fn rewrite(sql: &str, params: &[rdbc::Value]) -> rdbc::Result<String> {
     let dialect = GenericDialect {};
     let mut tokenizer = Tokenizer::new(&dialect, sql);
     tokenizer
@@ -289,6 +292,7 @@ mod tests {
     use crate::value_to_rdbc_err;
     use crate::to_rdbc_err;
     use crate::OracleDriver;
+    use crate::rewrite;
     use rdbc::*;
 
     #[test]
@@ -383,7 +387,7 @@ mod tests {
         let sql = "SELECT name FROM ZZZZZ WHERE code = ?";
         let params = &vec![Value::String("26".to_owned())];
 
-        let sql = crate::rewrite(sql,params).unwrap();
+        let sql = rewrite(sql,params).unwrap();
 
         let mut stmt = conn.prepare(sql.as_str()).unwrap();
 
