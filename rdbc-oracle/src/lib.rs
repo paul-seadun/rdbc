@@ -53,14 +53,15 @@ impl OracleDriver {
 
 impl rdbc::Driver for OracleDriver {
     fn connect(&self, url: &str) -> rdbc::Result<Box<dyn rdbc::Connection>> {
-        let conn = oracle::Connection::connect(&self.username,&self.password,url).unwrap();
+        let mut conn = oracle::Connection::connect(&self.username,&self.password,url).unwrap();
+        &conn.set_autocommit(true);
         Ok(Box::new(OracleConnection { conn }))
     }
 }
 
 
 
-struct OracleConnection {
+pub struct OracleConnection {
     conn: oracle::Connection,
 }
 
@@ -74,7 +75,25 @@ impl rdbc::Connection for OracleConnection {
 
     fn prepare(&mut self, sql: &str) -> rdbc::Result<Box<dyn rdbc::Statement+ '_>> {
         let stmt = self.conn.prepare(&sql,&Vec::new()).map_err(to_rdbc_err)?;
+        // dbg!(&stmt);
         Ok(Box::new(OraclePreparedStatement { stmt }))
+    }
+
+    fn start_transaction(&mut self) -> rdbc::Result<()> {
+        self.conn.set_autocommit(false);
+        Ok(())
+    }
+
+    fn commit(&mut self) -> rdbc::Result<()> {
+        self.conn.commit().map_err(to_rdbc_err)?;
+        self.conn.set_autocommit(true);
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> rdbc::Result<()>{
+        self.conn.rollback().map_err(to_rdbc_err)?;
+        self.conn.set_autocommit(true);
+        Ok(())
     }
 }
 
@@ -86,7 +105,7 @@ struct OracleStatement<'a> {
 impl<'a> rdbc::Statement for OracleStatement<'a> {
     fn execute_query(&mut self, params: &[rdbc::Value]) -> rdbc::Result<Box<dyn rdbc::ResultSet + '_>> {
         let sql = rewrite(&self.sql, params)?;
-        dbg!(&sql);
+        // dbg!(&sql);
         let mut ora_params:Vec<&dyn ToSql> = vec![];
         for v in params {
             match v {
@@ -97,6 +116,7 @@ impl<'a> rdbc::Statement for OracleStatement<'a> {
                 rdbc::Value::Date(d) => &ora_params.push(d),
             };
         }
+        // rdbc::Result::Err(rdbc::Error::General("E:".to_owned()))
         let result = self.conn.query(&sql,&ora_params).map_err(to_rdbc_err)?;
         Ok(Box::new(OracleResultSet {result,row:None}))
     }
@@ -134,7 +154,8 @@ impl<'a> rdbc::Statement for OraclePreparedStatement<'a> {
                 rdbc::Value::Date(d) => &ora_params.push(d),
             };
         }
-        dbg!(&params);
+        // dbg!(&params);
+        // rdbc::Result::Err(rdbc::Error::General("E:".to_owned()))
         let result = self.stmt.query(&ora_params).map_err(to_rdbc_err)?;
         Ok(Box::new(OracleResultSet {result,row:None}))
     }
@@ -210,11 +231,12 @@ impl<'a> rdbc::ResultSet for OracleResultSet<'a> {
 
 fn to_rdbc_type(t: &OracleType) -> rdbc::DataType {
     match t {
-        OracleType::BinaryFloat => rdbc::DataType::Float,
-        OracleType::BinaryDouble => rdbc::DataType::Double,
-        OracleType::Rowid => rdbc::DataType::Integer,
-        OracleType::Long => rdbc::DataType::Integer,
-        OracleType::LongRaw => rdbc::DataType::Integer,
+        OracleType::BinaryFloat | OracleType::Float(_) => rdbc::DataType::Decimal,
+        OracleType::BinaryDouble => rdbc::DataType::Decimal,
+        OracleType::Rowid | OracleType::Long | OracleType::LongRaw => rdbc::DataType::Integer,
+        OracleType::Number(_,_) => rdbc::DataType::Decimal,
+        OracleType::Raw(_) => rdbc::DataType::Byte,
+        OracleType::Timestamp(_)|OracleType::TimestampTZ(_)|OracleType::TimestampLTZ(_) => rdbc::DataType::Datetime,
         _=> rdbc::DataType::Char
     }
 }

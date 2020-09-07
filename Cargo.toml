@@ -2,6 +2,7 @@
 
 members = [
     "rdbc",
+	"mysql",
     "rdbc-mysql",
 	"rdbc-oracle",
     "rdbc-postgres",

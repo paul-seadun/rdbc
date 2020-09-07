@@ -20,12 +20,31 @@
 //! ```
 
 use chrono::prelude::*;
-
+use std::fmt;
 /// RDBC Error
 #[derive(Debug)]
 pub enum Error {
     General(String),
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::General(msg)=>{
+                write!(f, "Error:{}",msg)
+            }
+        }
+
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+}
+
+
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -61,12 +80,21 @@ pub trait Driver: Sync + Send {
 }
 
 /// Represents a connection to a database
-pub trait Connection {
+pub trait Connection: Sync + Send {
     /// Create a statement for execution
     fn create(&mut self, sql: &str) -> Result<Box<dyn Statement + '_>>;
 
     /// Create a prepared statement for execution
     fn prepare(&mut self, sql: &str) -> Result<Box<dyn Statement + '_>>;
+
+    fn start_transaction(
+        &mut self,
+    ) -> Result<()>;
+
+    fn commit(&mut self) -> Result<()>;
+
+    fn rollback(&mut self) -> Result<()>;
+
 }
 
 /// Represents an executable statement
@@ -79,7 +107,7 @@ pub trait Statement {
 }
 
 /// Result set from executing a query against a statement
-pub trait ResultSet {
+pub trait ResultSet  {
     /// get meta data about this result set
     fn meta_data(&self) -> Result<Box<dyn ResultSetMetaData>>;
 

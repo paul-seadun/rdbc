@@ -19,7 +19,6 @@
 
 use mysql as my;
 use mysql_common::constants::ColumnType;
-use mysql_common::chrono::DateTime;
 
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer, Word};
@@ -49,12 +48,13 @@ impl rdbc::Driver for MySQLDriver {
     fn connect(&self, url: &str) -> rdbc::Result<Box<dyn rdbc::Connection>> {
         let opts = my::Opts::from_url(&url).expect("DATABASE_URL invalid");
         let conn = my::Conn::new(opts).map_err(to_rdbc_err)?;
-        Ok(Box::new(MySQLConnection { conn }))
+        Ok(Box::new(MySQLConnection { conn,tx:None }))
     }
 }
 
 struct MySQLConnection {
     conn: my::Conn,
+    tx:Option<bool>,
 }
 
 impl rdbc::Connection for MySQLConnection {
@@ -69,7 +69,46 @@ impl rdbc::Connection for MySQLConnection {
         let stmt = self.conn.prepare(&sql).map_err(to_rdbc_err)?;
         Ok(Box::new(MySQLPreparedStatement { stmt }))
     }
+
+    fn start_transaction(
+        &mut self,
+    ) -> rdbc::Result<()>
+    {
+
+        // let mut tx = self.conn.start_transaction().unwrap();
+        let isolation_level = Some(my::IsolationLevel::ReadCommitted);
+        if let Some(i_level) = isolation_level {
+            let _ = self.conn.query(format!("SET TRANSACTION ISOLATION LEVEL {:?}", i_level)).map_err(to_rdbc_err)?;
+        }
+        self.conn.query("SET TRANSACTION READ WRITE").map_err(to_rdbc_err)?;
+        self.conn.query("START TRANSACTION WITH CONSISTENT SNAPSHOT").map_err(to_rdbc_err)?;
+        self.tx=Some(true);
+        // println!("tx started....");
+        Ok(())
+
+    }
+
+    fn commit(&mut self) -> rdbc::Result<()> {
+        if let Some(_tx) = self.tx {
+            self.conn.query("COMMIT").map_err(to_rdbc_err)?;
+            self.tx = None;
+            // println!("tx COMMIT....");
+        }
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> rdbc::Result<()> {
+        if let Some(_tx) = self.tx {
+            self.conn.query("ROLLBACK").map_err(to_rdbc_err)?;
+            self.tx = None;
+            // println!("tx ROLLBACK....");
+        }
+        Ok(())
+    }
+
+
 }
+
 
 struct MySQLStatement<'a> {
     conn: &'a mut my::Conn,
@@ -82,6 +121,7 @@ impl<'a> rdbc::Statement for MySQLStatement<'a> {
         params: &[rdbc::Value],
     ) -> rdbc::Result<Box<dyn rdbc::ResultSet + '_>> {
         let sql = rewrite(&self.sql, params)?;
+        // println!("executing:{}",&sql);
         let result = self.conn.query(&sql).map_err(to_rdbc_err)?;
         Ok(Box::new(MySQLResultSet { result, row: None }))
     }
@@ -120,6 +160,7 @@ impl<'a> rdbc::Statement for MySQLPreparedStatement<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct MySQLResultSet<'a> {
     result: my::QueryResult<'a>,
     row: Option<my::Result<my::Row>>,
@@ -205,7 +246,7 @@ fn to_my_value(v: &rdbc::Value) -> my::Value {
         rdbc::Value::String(s) => my::Value::from(s),
         rdbc::Value::DateTime(dt) => my::Value::from(dt),
         rdbc::Value::Date(d) => my::Value::from(d),
-        rdbc::Value::Time(t) => my::Value::from(t),
+        // rdbc::Value::Time(t) => my::Value::from(t),
         //TODO all types
     }
 }
@@ -258,29 +299,77 @@ mod tests {
 
     #[test]
     fn execute_query() -> rdbc::Result<()> {
-        execute("DROP TABLE IF EXISTS test", &vec![])?;
-        execute("CREATE TABLE test (a INT NOT NULL)", &vec![])?;
+        let driver: Arc<dyn rdbc::Driver> = Arc::new(MySQLDriver::new());
+        let mut conn = driver.connect("mysql://root:123456@127.0.0.1:3306/dun_soc")?;
+
+        &mut conn.start_transaction()?;
+
+        // execute(&mut conn,"DROP TABLE IF EXISTS test", &vec![])?;
+        // execute(&mut conn,"CREATE TABLE test (id INT  PRIMARY KEY)", &vec![])?;
         execute(
-            "INSERT INTO test (a) VALUES (?)",
-            &vec![rdbc::Value::Int32(123)],
+            &mut conn,
+            "INSERT INTO test (id) VALUES (?)",
+            &vec![rdbc::Value::Int32(129)],
         )?;
 
+        execute(
+            &mut conn,
+            "INSERT INTO test (id) VALUES (?)",
+            &vec![rdbc::Value::Int32(130)],
+        )?;
+
+
+        // &mut conn.rollback()?;
+        &mut conn.commit()?;
+
         let driver: Arc<dyn rdbc::Driver> = Arc::new(MySQLDriver::new());
-        let mut conn = driver.connect("mysql://root:secret@127.0.0.1:3307/mysql")?;
-        let mut stmt = conn.prepare("SELECT a FROM test")?;
+        let mut conn = driver.connect("mysql://root:123456@127.0.0.1:3306/dun_soc")?;
+        let mut stmt = conn.prepare("SELECT id FROM test")?;
         let mut rs = stmt.execute_query(&vec![])?;
         assert!(rs.next());
-        assert_eq!(Some(123), rs.get_i32(0)?);
+        assert_eq!(Some(128), rs.get_i32(0)?);
         assert!(!rs.next());
 
         Ok(())
     }
 
-    fn execute(sql: &str, values: &Vec<rdbc::Value>) -> rdbc::Result<u64> {
+    fn execute(conn: &mut Box<dyn rdbc::Connection>,sql: &str, values: &Vec<rdbc::Value>) -> rdbc::Result<u64> {
         println!("Executing '{}' with {} params", sql, values.len());
-        let driver: Arc<dyn rdbc::Driver> = Arc::new(MySQLDriver::new());
-        let mut conn = driver.connect("mysql://root:secret@127.0.0.1:3307/mysql")?;
         let mut stmt = conn.create(sql)?;
         stmt.execute_update(values)
+    }
+
+    #[test]
+    fn it_join() {
+        let driver: Arc<dyn rdbc::Driver> = Arc::new(MySQLDriver::new());
+        let mut conn = driver.connect("mysql://root:123456@127.0.0.1:3306/dun_soc").unwrap();
+
+        let mut stmt = conn.prepare(r#"
+        SELECT a.id, b.asset_os as os
+        FROM secrecy_norm_check_result a
+        LEFT JOIN asset_pc as b ON  ((b.asset_status = ?) AND (b.id = a.asset_code))
+        WHERE (a.asset_code = ?) AND (a.is_enable = ?) LIMIT 10 OFFSET 0
+           "#).unwrap();
+
+        let mut params = vec![];
+        params.push(rdbc::Value::String(format!("{}","inuse")));
+        params.push(rdbc::Value::String(format!("{}","MIDI-MASTER")));
+        params.push(rdbc::Value::String(format!("{}","true")));
+        let mut ret  = stmt.execute_query(&params).unwrap();
+
+        let mut x = 0;
+        let meta = ret.meta_data().unwrap();
+        for c in 0..meta.num_columns() {
+            let meta_type = meta.column_type(c);
+            let meta_name = meta.column_name(c);
+            println!("{}",meta_name);
+        }
+
+        while ret.next() {
+            let id = ret.get_bytes(1).unwrap().unwrap();
+            println!("x:{}--{}",x,String::from_utf8(id).unwrap());
+            x+=1;
+        }
+
     }
 }
