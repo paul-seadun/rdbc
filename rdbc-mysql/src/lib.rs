@@ -78,7 +78,7 @@ impl rdbc::Connection for MySQLConnection {
         // let mut tx = self.conn.start_transaction().unwrap();
         let isolation_level = Some(my::IsolationLevel::ReadCommitted);
         if let Some(i_level) = isolation_level {
-            let _ = self.conn.query(format!("SET TRANSACTION ISOLATION LEVEL {:?}", i_level)).map_err(to_rdbc_err)?;
+            let _ = self.conn.query(format!("SET TRANSACTION ISOLATION LEVEL {}", i_level)).map_err(to_rdbc_err)?;
         }
         self.conn.query("SET TRANSACTION READ WRITE").map_err(to_rdbc_err)?;
         self.conn.query("START TRANSACTION WITH CONSISTENT SNAPSHOT").map_err(to_rdbc_err)?;
